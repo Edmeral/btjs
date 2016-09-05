@@ -4,6 +4,8 @@ logs
 npm-debug.log*
 
 *.torrent
+torrent.json
+
 # Runtime data
 pids
 *.pid
