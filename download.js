@@ -8,8 +8,8 @@ torrent.getPeers(torrent.tracker, peers => {
   const client = net.Socket()
 
   // array of the pieces the peer has
-  let peerHas = new Array(torrent.numPieces).fill(false)
-
+  let peerHas
+  
   client.connect(peer.port, peer.ip, () => {
     console.log('Connected to peer:', peer)
 
@@ -29,21 +29,22 @@ torrent.getPeers(torrent.tracker, peers => {
       }
 
       else {
-        if (isKeepAlive(msg))
+
+        if (isKeepAliveMsg(msg))
           console.log('Just trying to keep this connection alive!')
-        else {
-          let len = msg.readUInt32BE(0)
-          console.log('Received some message with id: ', msg.readUInt8(4), ' and len', len)
+        if (isHaveMsg(msg))
+          console.log('Received have message with piece Index:', getPayload(msg).readUInt32BE())
+        if (isBitfieldMsg(msg)) {
+          let bitfield = getPayload(msg)
+          console.log('Received bitfield message with bitfield:', bitfield)
+          peerHas = parseBitfield(bitfield)
+          // console.log(peerHas)
         }
       }
       
     })
 
   })
-
-  // client.on('data', data => {
-  //   console.log('Got data from ', peer)
-  // })
 
   client.on('error', err => {
     console.log('error connecting to peer', peer)
@@ -78,6 +79,49 @@ function isHandshake(msg) {
     msg.slice(28, 48).equals(torrent.infoHash)
 }
 
-function isKeepAlive(msg) {
+function isKeepAliveMsg(msg) {
   return msg.length == 4 && msg.readUInt32BE(0) == 0
+}
+
+function isBitfieldMsg(msg) {
+  return msg.length >= 6 && msg.readInt8(4) == 5
+}
+
+function isHaveMsg(msg) {
+  return msg.length == 9 && msg.readInt8(4) == 4
+}
+
+function getPayload(msg) {
+  return msg.slice(5)
+}
+
+// Know which pieces the peer has based on the bitfield
+function parseBitfield(bitfield) {
+
+  // we will populate this array by chunks of 8 elements 
+  let peerHas = new Array(torrent.numPieces).fill(false)
+
+  for (let byteIndex = 0; byteIndex < bitfield.length; byteIndex++) {
+    let byte = bitfield.readInt8(byteIndex)
+    
+    // position of the piece in the array
+    // we start by the least significant bit
+    let i = 7 + byteIndex * 8
+
+    // if we're at last byte, we shouldn't 
+    // consider bits located beyond numPieces
+    if (byteIndex == bitfield.length - 1) {
+      let diff = 8 * bitfield.length - torrent.numPieces
+      byte = byte >> diff
+      i -= diff
+    }
+
+    for (; i >= byteIndex * 8; i--) {
+      let res = byte & 1 ? true : false
+      peerHas[i] = res
+      byte = byte >> 1
+    }
+  }
+ 
+  return peerHas
 }
