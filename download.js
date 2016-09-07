@@ -8,8 +8,8 @@ torrent.getPeers(torrent.tracker, peers => {
   const client = net.Socket()
 
   // array of the pieces the peer has
-  let peerHas
-  
+  let peerHas = new Array(torrent.numPieces).fill(false)
+
   client.connect(peer.port, peer.ip, () => {
     console.log('Connected to peer:', peer)
 
@@ -32,14 +32,19 @@ torrent.getPeers(torrent.tracker, peers => {
 
         if (isKeepAliveMsg(msg))
           console.log('Just trying to keep this connection alive!')
-        if (isHaveMsg(msg))
-          console.log('Received have message with piece Index:', getPayload(msg).readUInt32BE())
+
+        if (isHaveMsg(msg)) {
+          let index = getPayload(msg).readUInt32BE()
+          console.log('Received have message with piece Index:', index)
+          peerHas[index] = true
+        }
+
         if (isBitfieldMsg(msg)) {
           let bitfield = getPayload(msg)
           console.log('Received bitfield message with bitfield:', bitfield)
-          peerHas = parseBitfield(bitfield)
-          // console.log(peerHas)
+          parseBitfield(bitfield, peerHas)
         }
+
       }
       
     })
@@ -96,11 +101,9 @@ function getPayload(msg) {
 }
 
 // Know which pieces the peer has based on the bitfield
-function parseBitfield(bitfield) {
+function parseBitfield(bitfield, peerHas) {
 
-  // we will populate this array by chunks of 8 elements 
-  let peerHas = new Array(torrent.numPieces).fill(false)
-
+  // we will populate the peerHas array by chunks of 8 elements 
   for (let byteIndex = 0; byteIndex < bitfield.length; byteIndex++) {
     let byte = bitfield.readInt8(byteIndex)
     
@@ -121,7 +124,8 @@ function parseBitfield(bitfield) {
       peerHas[i] = res
       byte = byte >> 1
     }
+
   }
- 
+
   return peerHas
 }
