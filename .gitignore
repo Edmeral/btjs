@@ -5,6 +5,7 @@ npm-debug.log*
 
 *.torrent
 torrent.json
+flagfromservertorrent.json
 
 # Runtime data
 pids

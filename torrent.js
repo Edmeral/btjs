@@ -6,13 +6,14 @@ const crypto = require('crypto')
 
 const client = dgram.createSocket('udp4')
 
-let torrent = bencode.decode(fs.readFileSync('song.torrent'))
+let torrent = bencode.decode(fs.readFileSync('flagfromserver.torrent'))
 let tracker = url.parse(torrent.announce.toString())
 let peerId = crypto.randomBytes(20) // unique 20 bytes id for this client
+let infoHash = getInfoHash()
 
-getPeers(tracker, peers => {
-  console.log(peers[0])
-})
+// getPeers(tracker, peers => {
+//   console.log(peers[0])
+// })
 
 function getPeers(tracker, cb) {
   let connectReq = makeConnectReq()
@@ -36,7 +37,7 @@ function getPeers(tracker, cb) {
         client.send(announceReq, 0, announceReq.length, 
           tracker.port, tracker.hostname)
       }
-      
+
       // if it's the announce response
       else if (action == 1 && transactionIdRes == transactionId) {
         cb(getPeersFromAnnounce(msg))
@@ -76,7 +77,7 @@ function makeAnnounceReq(connectionId) {
   connectionId.copy(announceReq) // connection_id
   announceReq.writeInt32BE(1, 8) // action (1)
   crypto.randomBytes(4).copy(announceReq, 12) // transaction_id
-  getInfoHash().copy(announceReq, 16) // info_hash
+  infoHash.copy(announceReq, 16) // info_hash
   peerId.copy(announceReq, 36) // peer_id
   zeroesBuf.copy(announceReq, 56) // downloaded (all zeroes)
   getTorrentSize().copy(announceReq, 64) // left (in this case the torrent size)
@@ -115,4 +116,13 @@ function getPeersFromAnnounce(announceRes) {
     peers.push(peer)
   }
   return peers
+}
+
+module.exports = {
+  torrent,
+  tracker,
+  getPeers,
+  peerId,
+  infoHash,
+  numPieces: Math.ceil(torrent.info.length / torrent.info['piece length'])
 }
