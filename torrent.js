@@ -124,5 +124,6 @@ module.exports = {
   getPeers,
   peerId,
   infoHash,
+  info: torrent.info,
   numPieces: Math.ceil(torrent.info.length / torrent.info['piece length'])
 }
