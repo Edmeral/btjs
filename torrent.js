@@ -3,6 +3,7 @@ const bencode = require('bencode')
 const dgram = require('dgram')
 const url = require('url')
 const crypto = require('crypto')
+const utils = require('./utils')
 
 const client = dgram.createSocket('udp4')
 
@@ -93,9 +94,7 @@ function makeAnnounceReq(connectionId) {
 
 function getInfoHash() {
   let info = bencode.encode(torrent.info)
-  const hash = crypto.createHash('sha1')
-  hash.update(info)
-  return hash.digest()
+  return utils.getHash(info)
 }
 
 // Supporting only single file mode
@@ -118,12 +117,17 @@ function getPeersFromAnnounce(announceRes) {
   return peers
 }
 
+function getPieceHash(pieceIndex) {
+  return torrent.info.pieces.slice(pieceIndex * 20, pieceIndex * 20 + 20)
+}
+
 module.exports = {
   torrent,
   tracker,
   getPeers,
   peerId,
   infoHash,
+  getPieceHash,
   info: torrent.info,
   numPieces: Math.ceil(torrent.info.length / torrent.info['piece length'])
 }
