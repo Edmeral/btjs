@@ -1,17 +1,22 @@
 const net = require('net')
 const torrent = require('./torrent')
 const messages = require('./messages')
+const fs = require('fs')
 
-// Keeping track of the pieces that are requested
+const BLOCK_LEN = 16384 // 2^14
+const file = fs.openSync(torrent.info.name, 'w')
+
+// Keeping track of the pieces that are requested and those received
 let requested = new Array(torrent.numPieces).fill(false)
+let received = new Array(torrent.numPieces).fill(false)
 
 torrent.getPeers(torrent.tracker, peers => {
 
   let peer = peers[1]
   const client = net.Socket()
-
+  console.log('We have ' + peers.length + ' peers')
   // array of the pieces the peer has
-  let peerHas = new Array(torrent.numPieces).fill(false)
+  let peerHas = []
 
   peer.choking = true
   peer.interested = false
@@ -39,44 +44,53 @@ torrent.getPeers(torrent.tracker, peers => {
         // console.log('peer_id:', msg.slice(38).toString('hex'), torrent.peerId.toString('hex'))
       }
 
-      else {
+      if (msg.type == 'keepalive')
+        console.log('Just trying to keep this connection alive!')
 
-        if (msg.type == 'keepalive')
-          console.log('Just trying to keep this connection alive!')
+      if (msg.type == 'have') {
+        let index = msg.payload.readUInt32BE()
+        console.log('Received have message with piece Index:', index)
+        peerHas.push(index)
+      }
 
-        if (msg.type == 'have') {
-          let index = msg.payload.readUInt32BE()
-          console.log('Received have message with piece Index:', index)
-          peerHas[index] = true
-        }
+      if (msg.type == 'bitfield') {
+        let bitfield = msg.payload
+        console.log('Received bitfield message with bitfield:', bitfield)
+        parseBitfield(bitfield, peerHas)
+      }
 
-        if (msg.type == 'bitfield') {
-          let bitfield = msg.payload
-          console.log('Received bitfield message with bitfield:', bitfield)
-          parseBitfield(bitfield, peerHas)
-        }
-
-        if (msg.type == 'unchoke') {
-          console.log('The peer has unchoked us! wohoo!')
-          peer.choking = false
-          // Now we can request pieces, but we should do that after 
-          // all `have` messages are received but how can we know that?
-          if (peer.interested && !peer.choking) {
-            console.log('requesting some piece')
-            // for (piece in peerHas) {
-            //   if (!requested[piece]) {
-            //     request(piece)
-            //     requested[piec] = true
-            //   }
-            //   if (failed)
-            //     requested[piec] = false
-            // }
+      if (msg.type == 'unchoke') {
+        console.log('The peer has unchoked us! wohoo!')
+        peer.choking = false
+        // Now we can request pieces, but we should do that after 
+        // all `have` messages are received but how can we know that?
+        // it seems that the `unchoke` message is sent only after
+        // sending all `have' messages
+        if (peer.interested && !peer.choking) {
+          console.log('requesting the first piece')
+          // let pieceIndex = peerHas.pop()
+          
+          for (let piece of peerHas) {
+            requestPiece(client, piece)
           }
+          // for (piece in peerHas) {
+          //   if (!requested[piece]) {
+          //     request(piece)
+          //     requested[piec] = true
+          //   }
+          //   if (failed)
+          //     requested[piec] = false
+          // }
         }
-
-
+        // if (msg.type == 'piece') {
+        //   console.log('Got a fucking piece')
+        // }
       }
       
+      if (msg.type == 'piece') {
+        handleBlock(msg)
+      }
+
     })
 
   })
@@ -129,11 +143,64 @@ function parseBitfield(bitfield, peerHas) {
 
     for (; i >= byteIndex * 8; i--) {
       let res = byte & 1 ? true : false
-      peerHas[i] = res
+      if (res) peerHas.push(i)
       byte = byte >> 1
     }
-
   }
 
   return peerHas
+}
+
+function requestPiece(client, pieceIndex) {
+  let pieceLength
+  if (pieceIndex == torrent.numPieces - 1) // last piece
+    pieceLength = torrent.info.length % torrent.info['piece length']
+  else
+    pieceLength = torrent.info['piece length']
+
+  let blocks = Math.floor(pieceLength / BLOCK_LEN)
+  let lastBlockLen = pieceLength % BLOCK_LEN
+
+  for (let i = 0; i < blocks; i++) {
+    let begin = i * BLOCK_LEN
+    let length = BLOCK_LEN
+    requestBlock(client, pieceIndex, begin, length)
+  }
+
+  if (lastBlockLen > 0)
+    requestBlock(client, pieceIndex, blocks, lastBlockLen)
+}
+
+function requestBlock(client, pieceIndex, begin, length) {
+  let reqBuf = messages.request(pieceIndex, begin, length)
+  client.write(reqBuf, () => console.log('Requested a block', pieceIndex, begin, length))
+}
+
+function handleBlock(msg) {
+  let pieceIndex = msg.payload.readInt32BE(0)
+  let begin = msg.payload.readInt32BE(4)
+  let block = msg.payload.slice(8)
+  console.log('received a block ', pieceIndex, begin, block.length)
+
+  if (pieceIsDone(pieceIndex)) {
+    // Verify hash
+    
+    
+    // Save piece to file
+    let offset = pieceIndex * torrent.info['piece length'] + begin
+    fs.write(file, block, 0, block.length, offset)
+  }
+
+  // writing the block to the file
+  
+  
+  
+  // if (isDone()) {
+  // // we're done downloading
+  // }
+
+}
+
+function getBlockLength(pieceIndex, blockIndex) {
+
 }
