@@ -1,6 +1,7 @@
 const net = require('net')
 const torrent = require('./torrent')
 const messages = require('./messages')
+const utils = require('./utils')
 const fs = require('fs')
 
 const BLOCK_LEN = 16384 // 2^14
@@ -10,94 +11,113 @@ const file = fs.openSync(torrent.info.name, 'w')
 let requested = new Array(torrent.numPieces).fill(false)
 let received = new Array(torrent.numPieces).fill(false)
 
+// Array of arrays, each contains how many blocks has been received
+let receivedBlocks = new Array(torrent.numPieces)
+for (let i = 0; i < receivedBlocks.length; i++) {
+  receivedBlocks[i] = new Array(getNumBlocksForPiece(i)).fill(false)
+}
+
+// Actual pieces, each one is a buffer
+let pieces = new Array(torrent.numPieces)
+for (let i = 0; i < pieces.length; i++) {
+  pieces[i] = Buffer.alloc(getPieceLength(i))
+}
+
 torrent.getPeers(torrent.tracker, peers => {
-
-  let peer = peers[1]
-  const client = net.Socket()
   console.log('We have ' + peers.length + ' peers')
-  // array of the pieces the peer has
-  let peerHas = []
 
-  peer.choking = true
-  peer.interested = false
+  for (let peer of peers) {
 
-  client.connect(peer.port, peer.ip, () => {
-    console.log('Connected to peer:', peer)
+    const client = net.Socket()
 
-    let handshake = messages.handshake(torrent.infoHash, torrent.peerId)
-    console.log('Handshake buffer length', handshake.length)
+    // array of the pieces the peer has
+    let peerHas = []
 
-    client.write(handshake, () => console.log('Sent handshake'))
+    peer.choking = true
+    peer.interested = false
 
-    waitForMessage(client, msg => {
-      msg = messages.parse(msg, torrent)
+    let timeout = setTimeout(() => { 
+      console.log('Connection timeout', peer.ip)
+      client.destroy()
+    }, 5000)
 
-      if (msg.type == 'handshake') {
-        console.log('Received handshake from peer')
+    client.connect(peer.port, peer.ip, () => {
+      clearTimeout(timeout)
 
-        console.log('Will new send interested message..')
-        peer.interested = true
-        client.write(messages.interested, () => console.log('Sent interested'))
-        // console.log('pstrlen:', msg.readUInt8(0))
-        // console.log('pstr:', msg.slice(1, 20).toString())
-        // console.log('info_hash:', msg.toString('hex', 28, 48), torrent.infoHash.toString('hex'))
-        // console.log('peer_id:', msg.slice(38).toString('hex'), torrent.peerId.toString('hex'))
-      }
+      console.log('Connected to peer:', peer.id)
 
-      if (msg.type == 'keepalive')
-        console.log('Just trying to keep this connection alive!')
+      let handshake = messages.handshake(torrent.infoHash, torrent.peerId)
+      console.log('Handshake buffer length', handshake.length)
 
-      if (msg.type == 'have') {
-        let index = msg.payload.readUInt32BE()
-        console.log('Received have message with piece Index:', index)
-        peerHas.push(index)
-      }
+      client.write(handshake, () => console.log('Sent handshake'))
 
-      if (msg.type == 'bitfield') {
-        let bitfield = msg.payload
-        console.log('Received bitfield message with bitfield:', bitfield)
-        parseBitfield(bitfield, peerHas)
-      }
+      waitForMessage(client, msg => {
+        msg = messages.parse(msg, torrent)
 
-      if (msg.type == 'unchoke') {
-        console.log('The peer has unchoked us! wohoo!')
-        peer.choking = false
-        // Now we can request pieces, but we should do that after 
-        // all `have` messages are received but how can we know that?
-        // it seems that the `unchoke` message is sent only after
-        // sending all `have' messages
-        if (peer.interested && !peer.choking) {
-          console.log('requesting the first piece')
-          // let pieceIndex = peerHas.pop()
-          
-          for (let piece of peerHas) {
-            requestPiece(client, piece)
+        if (msg.type == 'handshake') {
+          console.log('Received handshake from peer')
+
+          console.log('Will new send interested message..')
+          peer.interested = true
+          client.write(messages.interested, () => console.log('Sent interested'))
+          // console.log('pstrlen:', msg.readUInt8(0))
+          // console.log('pstr:', msg.slice(1, 20).toString())
+          // console.log('info_hash:', msg.toString('hex', 28, 48), torrent.infoHash.toString('hex'))
+          // console.log('peer_id:', msg.slice(38).toString('hex'), torrent.peerId.toString('hex'))
+        }
+
+        if (msg.type == 'keepalive')
+          console.log('Just trying to keep this connection alive!')
+
+        if (msg.type == 'have') {
+          let index = msg.payload.readUInt32BE()
+          console.log('Received have message with piece Index:', index)
+          peerHas.push(index)
+        }
+
+        if (msg.type == 'bitfield') {
+          let bitfield = msg.payload
+          console.log('Received bitfield message with bitfield:', bitfield)
+          parseBitfield(bitfield, peerHas)
+        }
+
+        if (msg.type == 'unchoke') {
+          console.log('The peer has unchoked us! wohoo!')
+          peer.choking = false
+          // Now we can request pieces, but we should do that after 
+          // all `have` messages are received but how can we know that?
+          // it seems that the `unchoke` message is sent only after
+          // sending all `have' messages
+          if (peer.interested && !peer.choking) {
+            console.log('requesting the first piece')
+            // let pieceIndex = peerHas.pop()
+            requestPiece(client, peerHas)
+            // for (piece in peerHas) {
+            //   if (!requested[piece]) {
+            //     request(piece)
+            //     requested[piec] = true
+            //   }
+            //   if (failed)
+            //     requested[piec] = false
+            // }
           }
-          // for (piece in peerHas) {
-          //   if (!requested[piece]) {
-          //     request(piece)
-          //     requested[piec] = true
-          //   }
-          //   if (failed)
-          //     requested[piec] = false
+          // if (msg.type == 'piece') {
+          //   console.log('Got a fucking piece')
           // }
         }
-        // if (msg.type == 'piece') {
-        //   console.log('Got a fucking piece')
-        // }
-      }
-      
-      if (msg.type == 'piece') {
-        handleBlock(msg)
-      }
+        
+        if (msg.type == 'piece') {
+          handleBlock(client, peerHas, msg)
+        }
+
+      })
 
     })
 
-  })
-
-  client.on('error', err => {
-    console.log('error connecting to peer', peer)
-  })
+    client.on('error', err => {
+      console.log('error connecting to peer', peer)
+    })
+  }
 })
 
 function waitForMessage(client, cb) {
@@ -151,7 +171,10 @@ function parseBitfield(bitfield, peerHas) {
   return peerHas
 }
 
-function requestPiece(client, pieceIndex) {
+function requestPiece(client, peerHas) {
+  let pieceIndex = peerHas.pop()
+  requested[pieceIndex] = true
+
   let pieceLength
   if (pieceIndex == torrent.numPieces - 1) // last piece
     pieceLength = torrent.info.length % torrent.info['piece length']
@@ -176,22 +199,50 @@ function requestBlock(client, pieceIndex, begin, length) {
   client.write(reqBuf, () => console.log('Requested a block', pieceIndex, begin, length))
 }
 
-function handleBlock(msg) {
+function handleBlock(client, peerHas, msg) {
   let pieceIndex = msg.payload.readInt32BE(0)
   let begin = msg.payload.readInt32BE(4)
   let block = msg.payload.slice(8)
-  console.log('received a block ', pieceIndex, begin, block.length)
+  // console.log('received a block ', pieceIndex, begin, block.length)
 
-  if (pieceIsDone(pieceIndex)) {
+  let blockIndex = getBlockIndex(pieceIndex, begin)
+  receivedBlocks[pieceIndex][blockIndex] = true
+  block.copy(pieces[pieceIndex], begin)
+
+  // Piece is done
+  if (receivedBlocks[pieceIndex].every(block => block)) {
+    console.log('Received whole Piece', pieceIndex)
+
     // Verify hash
-    
-    
-    // Save piece to file
-    let offset = pieceIndex * torrent.info['piece length'] + begin
-    fs.write(file, block, 0, block.length, offset)
-  }
+    let pieceHash = utils.getHash(pieces[pieceIndex])
 
-  // writing the block to the file
+    if (torrent.getPieceHash(pieceIndex).equals(pieceHash)) {
+      console.log('Hashes are equals Saving piece to the file', pieceIndex)
+
+      // mark piece as received
+      received[pieceIndex] = true
+
+      // Save piece to file
+      let offset = pieceIndex * torrent.info['piece length']
+      fs.write(file, pieces[pieceIndex], 0, pieces[pieceIndex].length, offset)
+
+      // File is Done
+      if (received.every(piece => piece)) {
+        console.log('Received Whole File')
+        client.end()
+        process.exit()
+      }
+
+      // request next Piece from client
+      requestPiece(client, peerHas)
+    }
+    else {
+      receivedBlocks[pieceIndex] = receivedBlocks[pieceIndex].map(x => false)
+      received[pieceIndex] = false
+      requested[pieceIndex] = false
+    }
+ }
+
   
   
   
@@ -200,6 +251,26 @@ function handleBlock(msg) {
   // }
 
 }
+
+function getPieceLength(pieceIndex) {
+  let pieceLength
+  if (pieceIndex == torrent.numPieces - 1) // last piece
+    pieceLength = torrent.info.length % torrent.info['piece length']
+  else
+    pieceLength = torrent.info['piece length']
+
+  return pieceLength
+}
+
+function getNumBlocksForPiece(pieceIndex) {
+  let pieceLength = getPieceLength(pieceIndex)
+  return Math.ceil(pieceLength / BLOCK_LEN)
+}
+
+function getBlockIndex(pieceIndex, begin) {
+  let pieceLength = getPieceLength(pieceIndex)
+  return begin / BLOCK_LEN
+} 
 
 function getBlockLength(pieceIndex, blockIndex) {
 
