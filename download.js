@@ -2,6 +2,7 @@ const net = require('net')
 const torrent = require('./torrent')
 const messages = require('./messages')
 const utils = require('./utils')
+const debug = utils.debug(false)
 const fs = require('fs')
 const ProgressBar = require('progress')
 
@@ -24,7 +25,7 @@ for (let i = 0; i < pieces.length; i++) {
   pieces[i] = Buffer.alloc(getPieceLength(i))
 }
 
-console.log(`Downloading ${torrent.info.name} ..`)
+console.log(`Downloading ${torrent.info.name} ...`)
 
 let piecesCounter = 0
 let progressBar = new ProgressBar(`[:bar] :percent :elapseds :pieces pieces`, {
@@ -35,7 +36,7 @@ let progressBar = new ProgressBar(`[:bar] :percent :elapseds :pieces pieces`, {
   });
 
 torrent.getPeers(torrent.tracker, peers => {
-  console.log('We have ' + peers.length + ' peers')
+  debug('We have ' + peers.length + ' peers')
 
   for (let peer of peers) {
 
@@ -48,52 +49,52 @@ torrent.getPeers(torrent.tracker, peers => {
     peer.interested = false
 
     let timeout = setTimeout(() => { 
-      console.log('Connection timeout', peer.ip)
+      debug('Connection timeout', peer.ip)
       client.destroy()
     }, 5000)
 
     client.connect(peer.port, peer.ip, () => {
       clearTimeout(timeout)
 
-      console.log('Connected to peer:', peer.ip)
+      debug('Connected to peer:', peer.ip)
 
       let handshake = messages.handshake(torrent.infoHash, torrent.peerId)
-      console.log('Handshake buffer length', handshake.length)
+      debug('Handshake buffer length', handshake.length)
 
-      client.write(handshake, () => console.log('Sent handshake'))
+      client.write(handshake, () => debug('Sent handshake'))
 
       waitForMessage(client, msg => {
         msg = messages.parse(msg, torrent)
 
         if (msg.type == 'handshake') {
-          console.log('Received handshake from peer')
+          debug('Received handshake from peer')
 
-          console.log('Will new send interested message..')
+          debug('Will new send interested message..')
           peer.interested = true
-          client.write(messages.interested, () => console.log('Sent interested'))
-          // console.log('pstrlen:', msg.readUInt8(0))
-          // console.log('pstr:', msg.slice(1, 20).toString())
-          // console.log('info_hash:', msg.toString('hex', 28, 48), torrent.infoHash.toString('hex'))
-          // console.log('peer_id:', msg.slice(38).toString('hex'), torrent.peerId.toString('hex'))
+          client.write(messages.interested, () => debug('Sent interested'))
+          // debug('pstrlen:', msg.readUInt8(0))
+          // debug('pstr:', msg.slice(1, 20).toString())
+          // debug('info_hash:', msg.toString('hex', 28, 48), torrent.infoHash.toString('hex'))
+          // debug('peer_id:', msg.slice(38).toString('hex'), torrent.peerId.toString('hex'))
         }
 
         if (msg.type == 'keepalive')
-          console.log('Just trying to keep this connection alive!')
+          debug('Just trying to keep this connection alive!')
 
         if (msg.type == 'have') {
           let index = msg.payload.readUInt32BE()
-          console.log('Received have message with piece Index:', index)
+          debug('Received have message with piece Index:', index)
           peerHas.push(index)
         }
 
         if (msg.type == 'bitfield') {
           let bitfield = msg.payload
-          console.log('Received bitfield message with bitfield:', bitfield)
+          debug('Received bitfield message with bitfield:', bitfield)
           parseBitfield(bitfield, peerHas)
         }
 
         if (msg.type == 'unchoke') {
-          console.log('The peer has unchoked us! wohoo!')
+          debug('The peer has unchoked us! wohoo!')
           peer.choking = false
 
           // Now we can request pieces, but we should do that after 
@@ -113,7 +114,7 @@ torrent.getPeers(torrent.tracker, peers => {
     })
 
     client.on('error', err => {
-      console.log('error connecting to peer', peer)
+      debug('error connecting to peer', peer)
     })
   }
 })
@@ -189,7 +190,7 @@ function requestPiece(client, peerHas) {
   let blocks = Math.floor(pieceLength / BLOCK_LEN)
   let lastBlockLen = pieceLength % BLOCK_LEN
 
-  console.log(`Requesting piece n ${pieceIndex}`)
+  debug(`Requesting piece n ${pieceIndex}`)
 
   for (let i = 0; i < blocks; i++) {
     let begin = i * BLOCK_LEN
@@ -203,14 +204,14 @@ function requestPiece(client, peerHas) {
 
 function requestBlock(client, pieceIndex, begin, length) {
   let reqBuf = messages.request(pieceIndex, begin, length)
-  client.write(reqBuf, () => console.log('Requested a block', pieceIndex, begin, length))
+  client.write(reqBuf, () => debug('Requested a block', pieceIndex, begin, length))
 }
 
 function handleBlock(client, peerHas, msg) {
   let pieceIndex = msg.payload.readInt32BE(0)
   let begin = msg.payload.readInt32BE(4)
   let block = msg.payload.slice(8)
-  // console.log('received a block ', pieceIndex, begin, block.length)
+  // debug('received a block ', pieceIndex, begin, block.length)
 
   let blockIndex = getBlockIndex(pieceIndex, begin)
   receivedBlocks[pieceIndex][blockIndex] = true
@@ -218,13 +219,13 @@ function handleBlock(client, peerHas, msg) {
 
   // Piece is done
   if (receivedBlocks[pieceIndex].every(block => block) && !received[pieceIndex]) {
-    console.log('Received whole Piece', pieceIndex)
+    debug('Received whole Piece', pieceIndex)
 
     // Verify hash
     let pieceHash = utils.getHash(pieces[pieceIndex])
 
     if (torrent.getPieceHash(pieceIndex).equals(pieceHash)) {
-      console.log('Hashes are equals Saving piece to the file', pieceIndex)
+      debug('Hashes are equals Saving piece to the file', pieceIndex)
       piecesCounter++
       progressBar.tick({ pieces: `${piecesCounter}/${torrent.numPieces}`})
 
@@ -234,10 +235,10 @@ function handleBlock(client, peerHas, msg) {
       // Save piece to file
       let offset = pieceIndex * torrent.info['piece length']
       fs.write(file, pieces[pieceIndex], 0, pieces[pieceIndex].length, offset)
-      // console.log('received', piecesCounter)
+      // debug('received', piecesCounter)
       // File is Done
       if (received.every(piece => piece)) {
-        console.log('Received whole File')
+        console.log('Download complete!')
         client.end()
         process.exit()
       }

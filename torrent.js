@@ -12,10 +12,6 @@ let tracker = url.parse(torrent.announce.toString())
 let peerId = crypto.randomBytes(20) // unique 20 bytes id for this client
 let infoHash = getInfoHash()
 
-// getPeers(tracker, peers => {
-//   console.log(peers[0])
-// })
-
 function getPeers(tracker, cb) {
   let connectReq = makeConnectReq()
   let transactionId = connectReq.readInt32BE(12)

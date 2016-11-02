@@ -5,3 +5,11 @@ module.exports.getHash = function(buf) {
   hash.update(buf)
   return hash.digest()
 }
+
+module.exports.debug = function(active) {
+  return (...args) => {
+    if (active) 
+      console.log(...args)
+  }
+  
+}
