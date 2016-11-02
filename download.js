@@ -36,7 +36,7 @@ let progressBar = new ProgressBar(`[:bar] :percent :elapseds :pieces pieces`, {
   });
 
 torrent.getPeers(torrent.tracker, peers => {
-  debug('We have ' + peers.length + ' peers')
+  console.log('We have ' + peers.length + ' peers')
 
   for (let peer of peers) {
 
