@@ -7,7 +7,7 @@
 npm install
 node index.js [torrent file]
 ```
-![](http://i.imgur.com/xjFBJeJ.gif)
+![](http://i.imgur.com/pkspoiS.gif)
 #### TODO
 - [ ] Support HTTP trackers (only UDP trackers are supported right now)
 - [ ] Support multi files torrents
